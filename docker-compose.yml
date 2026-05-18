@@ -2,7 +2,7 @@ services:
   routing-updater:
     build:
       context: .
-    image: remna-routing-updater:local
+    image: ghcr.io/smnt666/remna-routing-updater:latest
     container_name: remna-routing-updater
     restart: unless-stopped
     env_file:
