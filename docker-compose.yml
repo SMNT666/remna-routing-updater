@@ -1,0 +1,18 @@
+services:
+  routing-updater:
+    build:
+      context: .
+    image: remna-routing-updater:local
+    container_name: remna-routing-updater
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ${ROUTING_ASSETS_DIR}:${ROUTING_ASSETS_DIR}
+    networks:
+      - remnawave-network
+
+networks:
+  remnawave-network:
+    name: remnawave-network
+    external: true
