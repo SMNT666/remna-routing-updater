@@ -32,6 +32,7 @@ GEOSITE_FILE_PATH = ROUTING_ASSETS_DIR / "geosite.dat"
 GEOIP_PUBLIC_URL = os.environ.get("GEOIP_PUBLIC_URL")
 GEOSITE_PUBLIC_URL = os.environ.get("GEOSITE_PUBLIC_URL")
 DEEPLINK_PREFIX = os.environ.get("DEEPLINK_PREFIX", "happ://routing/add/")
+ROUTING_HEADER_NAME = os.environ.get("ROUTING_HEADER_NAME", "routing")
 SSL_VERIFY = REMNA_BASE_URL.startswith("https://")
 
 REMNA_HEADERS = {
@@ -68,6 +69,35 @@ def patch_remna_settings(payload: dict) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def get_custom_response_headers(settings_data: dict) -> dict:
+    headers = settings_data.get("customResponseHeaders") or {}
+    if not isinstance(headers, dict):
+        raise ValueError("customResponseHeaders must be an object")
+
+    return headers
+
+
+def get_current_routing(settings_data: dict) -> str:
+    custom_headers = settings_data.get("customResponseHeaders")
+    if isinstance(custom_headers, dict) and ROUTING_HEADER_NAME in custom_headers:
+        return custom_headers.get(ROUTING_HEADER_NAME) or ""
+
+    return settings_data.get("happRouting", "") or ""
+
+
+def build_routing_patch(settings_uuid: str, settings_data: dict, routing: str) -> dict:
+    payload = {"uuid": settings_uuid}
+
+    if "customResponseHeaders" in settings_data:
+        headers = get_custom_response_headers(settings_data).copy()
+        headers[ROUTING_HEADER_NAME] = routing
+        payload["customResponseHeaders"] = headers
+    else:
+        payload["happRouting"] = routing
+
+    return payload
 
 
 def get_github_deeplink() -> str:
@@ -223,21 +253,28 @@ def main():
     log.info("GeoIP file: %s", GEOIP_FILE_PATH)
     log.info("Geosite file: %s", GEOSITE_FILE_PATH)
     log.info("Deeplink prefix: %s", DEEPLINK_PREFIX)
+    log.info("Routing header name: %s", ROUTING_HEADER_NAME)
     if GEOIP_PUBLIC_URL:
         log.info("GeoIP URL override: %s", GEOIP_PUBLIC_URL)
     if GEOSITE_PUBLIC_URL:
         log.info("Geosite URL override: %s", GEOSITE_PUBLIC_URL)
 
-    # Fetch current settings on startup
-    settings = get_remna_settings()
-    data = settings.get("response", settings)
-    settings_uuid = data["uuid"]
-    current_routing = data.get("happRouting", "") or ""
-    log.info("Settings UUID: %s", settings_uuid)
-    log.info("Current happRouting loaded (%d chars)", len(current_routing))
-
     while True:
         try:
+            settings = get_remna_settings()
+            data = settings.get("response", settings)
+            settings_uuid = data["uuid"]
+            current_routing = get_current_routing(data)
+            log.info("Settings UUID: %s", settings_uuid)
+            if "customResponseHeaders" in data:
+                log.info(
+                    "Current routing header %s loaded (%d chars)",
+                    ROUTING_HEADER_NAME,
+                    len(current_routing),
+                )
+            else:
+                log.info("Current happRouting loaded (%d chars)", len(current_routing))
+
             github_deeplink = get_github_deeplink()
             log.info("Fetched GitHub deeplink (%d chars)", len(github_deeplink))
             remna_deeplink = transform_deeplink(github_deeplink)
@@ -245,12 +282,11 @@ def main():
 
             if should_update_routing(github_deeplink, remna_deeplink, current_routing):
                 log.info("Routing changed! Updating Remna...")
-                result = patch_remna_settings({
-                    "uuid": settings_uuid,
-                    "happRouting": remna_deeplink,
-                })
+                result = patch_remna_settings(
+                    build_routing_patch(settings_uuid, data, remna_deeplink)
+                )
                 current_routing = remna_deeplink
-                log.info("Successfully updated happRouting in Remna")
+                log.info("Successfully updated routing in Remna")
                 log.debug("Patch response: %s", result)
             else:
                 log.info("No changes detected")

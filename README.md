@@ -1,6 +1,9 @@
 # Remna Routing Updater
 
-Микросервис для автоматического обновления `happRouting` в Remna панели при появлении новых данных в GitHub-репозитории [roscomvpn-happ-routing](https://github.com/hydraponique/roscomvpn-happ-routing).
+Микросервис для автоматического обновления routing в Remna панели при появлении новых данных в GitHub-репозитории [roscomvpn-happ-routing](https://github.com/hydraponique/roscomvpn-happ-routing).
+
+Для Remnawave 3.x сервис обновляет заголовок ответа `routing` в `customResponseHeaders`.
+Для старых версий Remnawave сохранена совместимость с полем `happRouting`.
 
 ## Как работает
 
@@ -33,6 +36,8 @@ ROUTING_ASSETS_DIR=/opt/remnawave/downloads
 GEOIP_PUBLIC_URL=https://your-host/routing/geoip.dat
 GEOSITE_PUBLIC_URL=https://your-host/routing/geosite.dat
 DEEPLINK_PREFIX=happ://routing/add/
+# Remnawave 3.x: имя заголовка ответа с роутингом
+ROUTING_HEADER_NAME=routing
 ```
 
 Создайте файл `docker-compose.yml`:
@@ -68,6 +73,8 @@ ROUTING_ASSETS_DIR=/opt/remnawave/downloads
 GEOIP_PUBLIC_URL=https://your-host/routing/geoip.dat
 GEOSITE_PUBLIC_URL=https://your-host/routing/geosite.dat
 DEEPLINK_PREFIX=happ://routing/add/
+# Remnawave 3.x: имя заголовка ответа с роутингом
+ROUTING_HEADER_NAME=routing
 ```
 
 > `remnawave-backend` — имя контейнера панели, `3000` — порт по умолчанию. Измените при необходимости.
@@ -144,10 +151,11 @@ docker compose up -d --build
 | `GEOIP_PUBLIC_URL` | нет | исходный `Geoipurl` из JSON | URL, который будет записан в JSON вместо исходного `Geoipurl` |
 | `GEOSITE_PUBLIC_URL` | нет | исходный `Geositeurl` из JSON | URL, который будет записан в JSON вместо исходного `Geositeurl` |
 | `DEEPLINK_PREFIX` | нет | `happ://routing/add/` | Префикс deeplink, который будет собран перед закодированным payload |
+| `ROUTING_HEADER_NAME` | нет | `routing` | Имя заголовка ответа для Remnawave 3.x |
 
 ## Что в итоге уходит в Remna
 
-В Remna отправляется уже модифицированный `happRouting`:
+В Remna отправляется уже модифицированный роутинг:
 
 1. исходный диплинк скачан из GitHub
 2. JSON внутри декодирован
@@ -155,6 +163,7 @@ docker compose up -d --build
 4. `Geoipurl` и `Geositeurl` заменены на ваши URL
 5. JSON снова закодирован в `base64`
 6. перед `base64` добавлен префикс из `DEEPLINK_PREFIX`, по умолчанию `happ://routing/add/`
+7. для Remnawave 3.x значение записывается в `customResponseHeaders.routing`, для старых версий - в `happRouting`
 
 ## Сравнение обновлений
 
