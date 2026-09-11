@@ -1,0 +1,11 @@
+.git
+.github
+.agents
+.codex
+.env
+.env.custom
+.private-backups
+.runtime
+__pycache__
+tests
+*.pyc

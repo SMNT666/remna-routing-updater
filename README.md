@@ -1,183 +1,204 @@
 # Remna Routing Updater
 
-Микросервис для автоматического обновления routing в Remna панели при появлении новых данных в GitHub-репозитории [roscomvpn-happ-routing](https://github.com/hydraponique/roscomvpn-happ-routing).
+Сервис публикует проверенные GeoSite/GeoIP и Happ routing-профиль в двух
+изолированных режимах:
 
-Для Remnawave 3.x сервис обновляет заголовок ответа `routing` в `customResponseHeaders`.
-Для старых версий Remnawave сохранена совместимость с полем `happRouting`.
+- `original` — последние stable assets `hydraponique/roscomvpn-geosite` и
+  `hydraponique/roscomvpn-geoip` без изменения ни одного байта;
+- `custom` — те же базы, но только `whitelist` заменён данными vahellame.
 
-## Как работает
+Custom по умолчанию никогда не читает и не изменяет Remnawave. Старый `.env`
+совместим: без новых переменных режимом остаётся `original`, а публикация в
+панель включена.
 
-1. При запуске получает текущие настройки подписки из Remna API (`GET /subscription-settings`)
-2. Периодически скачивает `DEFAULT.DEEPLINK` из GitHub-репозитория
-3. Декодирует диплинк из `base64` в JSON
-4. Скачивает `geoip.dat` и `geosite.dat` по URL из JSON или по URL, заданным через env
-5. Сохраняет файлы в каталог `ROUTING_ASSETS_DIR` как `geoip.dat` и `geosite.dat` с заменой существующих файлов
-6. Подменяет `Geoipurl` и `Geositeurl` в JSON на ваши URL
-7. Кодирует JSON обратно в `base64` и отправляет обновление в Remna (`PATCH /subscription-settings`)
+## Гарантии обновления
 
-## Быстрый старт
+Каждый DAT и checksum берутся из одного ответа конкретного GitHub Release.
+Проверяются checksum-файл и `digest` GitHub asset, если он предоставлен. До
+публикации проверяются protobuf, CIDR, категории, непустой whitelist и
+побайтовая сохранность всех незаменяемых категорий.
+
+Оба DAT, JSON и deeplink сначала записываются в новый каталог
+`<mode>/releases/<snapshot-id>`, затем единым `rename(2)` переключается симлинк
+`<mode>/current`. Поэтому читатель `current` не видит половину новой пары.
+Старые snapshots сохраняются для отката. Статус и lock разделены по режимам.
+
+Публикуются:
+
+```text
+<mode>/current/geosite.dat
+<mode>/current/geosite.dat.sha256
+<mode>/current/geosite.dat.sha256sum
+<mode>/current/geoip.dat
+<mode>/current/geoip.dat.sha256
+<mode>/current/geoip.dat.sha256sum
+<mode>/current/manifest.json
+<mode>/current/routing.json
+<mode>/current/routing.deeplink
+<mode>/status.json
+```
+
+Immutable URL набора строится как
+`/files/<mode>/releases/<snapshot-id>/<filename>`.
+
+## Custom whitelist
+
+GeoSite: категория `whitelist` RoscomVPN заменяется одноимённой категорией
+`vahellame/russia-whitelist-geosite`. Типы `plain/domain/full/regexp` и
+атрибуты сохраняются в исходном protobuf-сообщении донора.
+
+GeoIP: `whitelist` заменяется точным объединением категорий из
+`GEOIP_WHITELIST_CATEGORIES` репозитория
+`vahellame/russia-whitelist-geoip`. По умолчанию это `other,vk,yandex`, как в
+актуальном `profiles/whitelist.json`. Совпадающие IPv4/IPv6 CIDR удаляются, но
+сети не агрегируются и разрешённый диапазон не расширяется. `trash` и
+`category-public-dns` запрещены. Инвертированные и имеющие неизвестную
+семантику категории отклоняются.
+
+Custom JSON получает отличимое имя и минимальное `geoip:whitelist` в
+`DirectIp`, если правила ещё нет. Другие правила, DNS и порядок не меняются.
+
+## Конфигурация
+
+См. [.env.example](.env.example) и
+[.env.custom.example](.env.custom.example). Основные параметры:
+
+| Переменная | Значение |
+|---|---|
+| `GEODATA_MODE` | `original` или `custom` |
+| `PUBLISH_TO_REMNA` | Разрешить GET/PATCH панели; default `true` только для original |
+| `ROUTING_ASSETS_DIR` | Общий корень; сервис пишет только в `<root>/<mode>` |
+| `MODE_OUTPUT_DIR` | Необязательный явный каталог конкретного экземпляра |
+| `GEODATA_CHECK_INTERVAL` | Независимый интервал проверки релизов, минимум 60 секунд |
+| `GEOIP_WHITELIST_CATEGORIES` | Список GeoIP-категорий донора через запятую |
+| `KEEP_RELEASES` | Сколько snapshots хранить, минимум 2 |
+| `MAX_WHITELIST_SHRINK_FRACTION` | Допустимое сокращение после первой custom-миграции |
+
+`REMNA_BASE_URL`, `REMNA_TOKEN` и `COOKIE` не нужны и не читаются при
+`PUBLISH_TO_REMNA=false`.
+
+## Запуск двух экземпляров
+
+Production original сохраняет пользовательский `.env`. Custom использует
+отдельный `.env.custom` без реквизитов панели:
 
 ```bash
-mkdir remna-routing-updater && cd remna-routing-updater
+cp .env.custom.example .env.custom
+# Настройте только source/public URLs.
+
+# Сначала безопасный custom:
+docker compose --profile custom up -d --build --no-deps routing-custom
+
+# Existing original — отдельно, после подготовки original/current и nginx:
+docker compose up -d --build routing-updater
 ```
 
-### Внешняя панель (HTTPS)
+В Compose нет `container_name`: имена изолирует Compose project/service. Оба
+сервиса монтируют общий корень, но владеют разными каталогами `original` и
+`custom`, отдельными lock/state/history.
 
-Создайте файл `.env`:
-
-```env
-REMNA_BASE_URL=https://your-host/api
-REMNA_TOKEN=your_bearer_token
-# если API дополнительно требует cookie:
-# COOKIE=panel_auth=abc123secret
-GITHUB_RAW_URL=https://raw.githubusercontent.com/hydraponique/roscomvpn-happ-routing/refs/heads/main/HAPP/DEFAULT.DEEPLINK
-CHECK_INTERVAL=300
-ROUTING_ASSETS_DIR=/opt/remnawave/downloads
-GEOIP_PUBLIC_URL=https://your-host/routing/geoip.dat
-GEOSITE_PUBLIC_URL=https://your-host/routing/geosite.dat
-DEEPLINK_PREFIX=happ://routing/add/
-# Remnawave 3.x: имя заголовка ответа с роутингом
-ROUTING_HEADER_NAME=routing
-```
-
-Создайте файл `docker-compose.yml`:
-
-```yaml
-services:
-  routing-updater:
-    build:
-      context: .
-    image: remna-routing-updater:local
-    container_name: remna-routing-updater
-    restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - ${ROUTING_ASSETS_DIR}:${ROUTING_ASSETS_DIR}
-```
-
-### Локальная панель (Docker)
-
-Если RemnaWave панель запущена локально в Docker (образ `remnawave/backend:latest`), контейнер updater нужно подключить к той же сети `remnawave-network` и обращаться к панели по имени контейнера.
-
-Создайте файл `.env`:
-
-```env
-REMNA_BASE_URL=http://remnawave-backend:3000/api
-REMNA_TOKEN=your_bearer_token
-# если API дополнительно требует cookie:
-# COOKIE=panel_auth=abc123secret
-GITHUB_RAW_URL=https://raw.githubusercontent.com/hydraponique/roscomvpn-happ-routing/refs/heads/main/HAPP/DEFAULT.DEEPLINK
-CHECK_INTERVAL=300
-ROUTING_ASSETS_DIR=/opt/remnawave/downloads
-GEOIP_PUBLIC_URL=https://your-host/routing/geoip.dat
-GEOSITE_PUBLIC_URL=https://your-host/routing/geosite.dat
-DEEPLINK_PREFIX=happ://routing/add/
-# Remnawave 3.x: имя заголовка ответа с роутингом
-ROUTING_HEADER_NAME=routing
-```
-
-> `remnawave-backend` — имя контейнера панели, `3000` — порт по умолчанию. Измените при необходимости.
-
-Создайте файл `docker-compose.yml`:
-
-```yaml
-services:
-  routing-updater:
-    build:
-      context: .
-    image: remna-routing-updater:local
-    container_name: remna-routing-updater
-    restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - ${ROUTING_ASSETS_DIR}:${ROUTING_ASSETS_DIR}
-    networks:
-      - remnawave-network
-
-networks:
-  remnawave-network:
-    name: remnawave-network
-    external: true
-```
-
-> Сеть `remnawave-network` должна уже существовать (создаётся docker-compose панели RemnaWave).
->
-> Docker bind mount берёт путь из `ROUTING_ASSETS_DIR`, поэтому эта директория будет использоваться и внутри контейнера, и на хосте.
->
-> Файлы всегда сохраняются как:
->
-> ```env
-> ROUTING_ASSETS_DIR=/opt/remnawave/downloads
-> ```
->
-> Итоговые пути будут:
->
-> - `/opt/remnawave/downloads/geoip.dat`
-> - `/opt/remnawave/downloads/geosite.dat`
->
-> Эту же директорию нужно раздавать вашим HTTP-сервером так, чтобы `GEOIP_PUBLIC_URL` и `GEOSITE_PUBLIC_URL` были доступны клиентам.
-
-Запуск:
+Разовый запуск и healthcheck:
 
 ```bash
-docker compose up -d --build
+docker compose --profile custom run --rm --no-deps routing-custom python app.py --once
+docker compose --profile custom exec routing-custom python app.py --healthcheck
 ```
 
-### Сборка из исходников
+## Nginx
 
-Если хотите собрать образ самостоятельно:
+Существующие production URL должны продолжать указывать на original. После
+однократной подготовки `original/current` рекомендуемая схема:
+
+```nginx
+# Legacy production URL — не меняется для клиентов.
+location = /files/geoip.dat {
+    alias /var/www/subscription-files/original/current/geoip.dat;
+}
+location = /files/geosite.dat {
+    alias /var/www/subscription-files/original/current/geosite.dat;
+}
+
+location = /files/custom/status.json {
+    alias /var/www/subscription-files/custom/status.json;
+    add_header Cache-Control "no-store" always;
+}
+location ^~ /files/custom/releases/ {
+    alias /var/www/subscription-files/custom/releases/;
+    add_header Cache-Control "public, immutable" always;
+}
+location ^~ /files/custom/ {
+    alias /var/www/subscription-files/custom/current/;
+    add_header Cache-Control "no-cache" always;
+}
+```
+
+Проверка перед reload:
 
 ```bash
-git clone https://github.com/lifeindarkside/Remnawave-Routing-update.git
-cd Remnawave-Routing-update
-cp .env.example .env
-# отредактируйте .env
-docker build -t remna-routing-updater .
-docker compose up -d --build
+docker compose -f /opt/remnawave/docker-compose.yml exec -T remnawave-nginx nginx -t
+docker compose -f /opt/remnawave/docker-compose.yml restart remnawave-nginx
 ```
 
-## Переменные окружения
+## Remnawave sync
 
-| Переменная | Обязательная | По умолчанию | Описание |
-|---|---|---|---|
-| `REMNA_BASE_URL` | да | — | Базовый URL API Remna (например `https://host/api` или `http://remnawave-backend:3000/api`) |
-| `REMNA_TOKEN` | да | — | Bearer-токен для авторизации в Remna API |
-| `COOKIE` | нет | — | Cookie для дополнительной авторизации в API, например `panel_auth=abc123secret` |
-| `GITHUB_RAW_URL` | нет | [DEFAULT.DEEPLINK](https://raw.githubusercontent.com/hydraponique/roscomvpn-happ-routing/refs/heads/main/HAPP/DEFAULT.DEEPLINK) | URL файла с роутингом на GitHub |
-| `CHECK_INTERVAL` | нет | `300` | Интервал проверки обновлений (в секундах) |
-| `ROUTING_ASSETS_DIR` | нет | `/opt/remnawave/downloads` | Каталог-таргет для файлов на хосте и внутри контейнера. Сервис всегда сохраняет туда `geoip.dat` и `geosite.dat` |
-| `GEOIP_PUBLIC_URL` | нет | исходный `Geoipurl` из JSON | URL, который будет записан в JSON вместо исходного `Geoipurl` |
-| `GEOSITE_PUBLIC_URL` | нет | исходный `Geositeurl` из JSON | URL, который будет записан в JSON вместо исходного `Geositeurl` |
-| `DEEPLINK_PREFIX` | нет | `happ://routing/add/` | Префикс deeplink, который будет собран перед закодированным payload |
-| `ROUTING_HEADER_NAME` | нет | `routing` | Имя заголовка ответа для Remnawave 3.x |
+При `PUBLISH_TO_REMNA=true` fingerprint включает профиль без upstream
+`LastUpdated` и SHA256 обеих баз. Свой `LastUpdated` меняется только при
+реальном изменении. Файлы публикуются до PATCH. Успешная синхронизация
+записывается только после повторного GET и подтверждения значения. Ошибка PATCH
+не помечается успехом и повторяется после следующего цикла/рестарта. Перед
+PATCH настройки перечитываются, а остальные `customResponseHeaders`
+сохраняются. Для старого API без `customResponseHeaders` остаётся fallback
+`happRouting`.
 
-## Что в итоге уходит в Remna
+## External squad в Remnawave 3.x
 
-В Remna отправляется уже модифицированный роутинг:
+Remnawave 3.x позволяет external squad добавлять свой header через
+`responseHeadersAdd`; это не глобальный `/subscription-settings`. В 3.x endpoint
+обновления — `PATCH /api/external-squads`, UUID передаётся в JSON body.
 
-1. исходный диплинк скачан из GitHub
-2. JSON внутри декодирован
-3. `geoip.dat` и `geosite.dat` сохранены локально
-4. `Geoipurl` и `Geositeurl` заменены на ваши URL
-5. JSON снова закодирован в `base64`
-6. перед `base64` добавлен префикс из `DEEPLINK_PREFIX`, по умолчанию `happ://routing/add/`
-7. для Remnawave 3.x значение записывается в `customResponseHeaders.routing`, для старых версий - в `happRouting`
-
-## Сравнение обновлений
-
-Сервис сравнивает диплинки по полю `LastUpdated`.
-
-- Если `LastUpdated` в исходном диплинке отсутствует, обновление пропускается.
-- Если текущий `happRouting` пустой, битый или без `LastUpdated`, сервис считает, что обновление требуется.
-
-## Логи
+Сначала получите custom deeplink и текущий squad, затем объедините существующие
+headers (не заменяйте их пустым объектом):
 
 ```bash
-docker compose logs -f
+CUSTOM_ROUTING=$(tr -d '\n' </opt/remnawave/downloads/custom/current/routing.deeplink)
+curl -fsS -H "Authorization: Bearer $REMNA_TOKEN" \
+  "$REMNA_BASE_URL/external-squads/$SQUAD_UUID" > /tmp/squad.json
+jq --arg routing "$CUSTOM_ROUTING" --arg uuid "$SQUAD_UUID" \
+  '{uuid: $uuid, responseHeadersAdd: ((.response.responseHeadersAdd // {}) + {routing: $routing})}' \
+  /tmp/squad.json > /tmp/squad-patch.json
+curl -fsS -X PATCH -H "Authorization: Bearer $REMNA_TOKEN" \
+  -H 'Content-Type: application/json' --data-binary @/tmp/squad-patch.json \
+  "$REMNA_BASE_URL/external-squads"
 ```
 
-## Лицензия
+Назначение пользователя в external squad — отдельная операция. Этот сервис её
+не выполняет. Subscription Response Rules могут переопределить настройки
+external squad; SRR с `applyHeadersToEnd=true` имеет финальный приоритет.
 
-MIT
+## Диагностика и откат
+
+```bash
+docker compose --profile custom logs -f routing-custom
+docker compose logs -f routing-updater
+jq . /opt/remnawave/downloads/custom/status.json
+readlink /opt/remnawave/downloads/custom/current
+```
+
+Откат custom на сохранённый immutable snapshot:
+
+```bash
+cd /opt/remnawave/downloads/custom
+ln -s "releases/<snapshot-id>" current.next
+mv -Tf current.next current
+```
+
+После ручного отката остановите updater или ожидайте, что следующий успешный
+цикл снова активирует текущий upstream snapshot.
+
+## Тесты
+
+```bash
+python3 -m unittest discover -s tests -v
+docker compose config -q
+docker compose build
+```

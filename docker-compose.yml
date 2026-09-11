@@ -2,15 +2,55 @@ services:
   routing-updater:
     build:
       context: .
-    image: ghcr.io/smnt666/remna-routing-updater:latest
-    container_name: remna-routing-updater
+    image: remna-routing-updater:dual-geodata
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      GEODATA_MODE: original
+      PUBLISH_TO_REMNA: ${PUBLISH_TO_REMNA:-true}
+      ROUTING_ASSETS_DIR: /data
     volumes:
-      - ${ROUTING_ASSETS_DIR}:${ROUTING_ASSETS_DIR}
+      - ${ROUTING_ASSETS_DIR:-/opt/remnawave/downloads}:/data
     networks:
       - remnawave-network
+    healthcheck:
+      test: ["CMD", "python", "app.py", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  routing-custom:
+    build:
+      context: .
+    image: remna-routing-updater:dual-geodata
+    restart: unless-stopped
+    profiles: ["custom"]
+    env_file:
+      - .env.custom
+    environment:
+      GEODATA_MODE: custom
+      PUBLISH_TO_REMNA: "false"
+      ROUTING_ASSETS_DIR: /data
+    volumes:
+      - ${ROUTING_ASSETS_DIR:-/opt/remnawave/downloads}:/data
+    healthcheck:
+      test: ["CMD", "python", "app.py", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
 networks:
   remnawave-network:
