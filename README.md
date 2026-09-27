@@ -70,6 +70,7 @@ Custom JSON получает отличимое имя и минимальное
 | `ROUTING_ASSETS_DIR` | Общий корень; сервис пишет только в `<root>/<mode>` |
 | `MODE_OUTPUT_DIR` | Необязательный явный каталог конкретного экземпляра |
 | `GEODATA_CHECK_INTERVAL` | Независимый интервал проверки релизов, минимум 60 секунд |
+| `ROUTING_PROFILE_NAME` | Необязательное точное имя профиля; без переменной имя upstream не меняется |
 | `GEOIP_WHITELIST_CATEGORIES` | Список GeoIP-категорий донора через запятую |
 | `KEEP_RELEASES` | Сколько snapshots хранить, минимум 2 |
 | `MAX_WHITELIST_SHRINK_FRACTION` | Допустимое сокращение после первой custom-миграции |

@@ -27,6 +27,7 @@ def config(root: Path, mode="custom", publish=False):
         min_geoip_rules=1,
         geoip_categories=("other", "vk", "yandex"),
         max_shrink_fraction=0.5,
+        routing_profile_name=None,
         custom_name_suffix="Custom Whitelist",
         remna_base_url="http://remnawave:3000/api" if publish else None,
         remna_token="test-token" if publish else None,
@@ -141,6 +142,19 @@ class DownloadTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_profile_name_override_and_default_original_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            databases = {"geosite.dat": b"site", "geoip.dat": b"ip"}
+            original = config(Path(temporary), mode="original")
+            unchanged, _, _, _ = app.prepare_profile(original, PROFILE, databases, {})
+            self.assertEqual(unchanged["Name"], "RoscomVPN")
+
+            renamed = app.Config(
+                **{**original.__dict__, "routing_profile_name": "ZNE Routing"}
+            )
+            prepared, _, _, _ = app.prepare_profile(renamed, PROFILE, databases, {})
+            self.assertEqual(prepared["Name"], "ZNE Routing")
+
     def test_custom_name_urls_rule_and_stable_last_updated(self):
         with tempfile.TemporaryDirectory() as temporary:
             cfg = config(Path(temporary))

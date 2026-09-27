@@ -89,6 +89,7 @@ class Config:
     min_geoip_rules: int
     geoip_categories: tuple[str, ...]
     max_shrink_fraction: float
+    routing_profile_name: str | None
     custom_name_suffix: str
     remna_base_url: str | None
     remna_token: str | None
@@ -127,6 +128,7 @@ class Config:
             min_geoip_rules=parse_positive_int("MIN_GEOIP_WHITELIST_RULES", 1),
             geoip_categories=categories,
             max_shrink_fraction=shrink,
+            routing_profile_name=(os.getenv("ROUTING_PROFILE_NAME") or "").strip() or None,
             custom_name_suffix=os.getenv("CUSTOM_PROFILE_NAME_SUFFIX", "Custom Whitelist"),
             remna_base_url=(os.getenv("REMNA_BASE_URL") or "").rstrip("/") or None
             if publish
@@ -397,10 +399,13 @@ def prepare_profile(
         prepared["Geoipurl"] = config.geoip_public_url
     if config.geosite_public_url:
         prepared["Geositeurl"] = config.geosite_public_url
-    if config.mode == "custom":
+    if config.routing_profile_name:
+        prepared["Name"] = config.routing_profile_name
+    elif config.mode == "custom":
         original_name = str(prepared.get("Name") or "Routing")
         if config.custom_name_suffix.lower() not in original_name.lower():
             prepared["Name"] = f"{original_name} — {config.custom_name_suffix}"
+    if config.mode == "custom":
         direct_ip = prepared.get("DirectIp")
         if not isinstance(direct_ip, list):
             raise ValueError("Source profile DirectIp must be an array")
